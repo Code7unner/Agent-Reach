@@ -19,7 +19,8 @@ class _StubChannel:
         self._fix_result = fix_result or (False, "")
         self.fix_called = False
 
-    def check(self, config=None):
+    def check(self, config=None, offline=False):
+        self.check_offline = offline
         return self._status, self._message
 
     def fix(self, config=None):
@@ -105,6 +106,54 @@ class TestDoctor:
         assert "1/3 channels available" in plain
         # Inactive optional channels should be summarized in one line
         assert "channels you can unlock" in plain
+
+    def test_warn_channels_surfaced_separately_from_off(self):
+        """A configured-but-dead (warn) session must be flagged for re-auth,
+        not buried in the 'unlock more channels' summary (silent-expiry fix #4)."""
+        report = doctor.format_report(
+            {
+                "web": {"status": "ok", "name": "Web", "message": "fine",
+                        "tier": 0, "backends": []},
+                "linkedin": {"status": "warn", "name": "LinkedIn",
+                             "message": "session expired — run `linkedin login`",
+                             "tier": 2, "backends": ["mcporter"]},
+                "exa_search": {"status": "off", "name": "Exa",
+                               "message": "mcporter not configured",
+                               "tier": 1, "backends": ["Exa"]},
+            }
+        )
+        import re
+        plain = re.sub(r"\[[^\]]*\]", "", report)
+
+        # warn channel surfaced in a dedicated needs-attention/re-auth block
+        assert "Needs attention" in plain
+        attention_idx = plain.index("Needs attention")
+        unlock_idx = plain.index("channels you can unlock")
+        # LinkedIn (warn) appears in the attention block, with its re-auth hint
+        assert "LinkedIn" in plain[attention_idx:unlock_idx]
+        assert "linkedin login" in plain
+        # off channel (Exa) is the one offered to unlock, not LinkedIn
+        unlock_line = plain[unlock_idx:]
+        assert "Exa" in unlock_line
+        assert "LinkedIn" not in unlock_line
+
+
+class TestOfflineProbe:
+    def test_check_all_forwards_offline_flag(self, tmp_config, monkeypatch):
+        ch = _StubChannel("twitter", "Twitter/X", 1, "ok", "live")
+        monkeypatch.setattr(doctor, "get_all_channels", lambda: [ch])
+
+        doctor.check_all(tmp_config, offline=True)
+
+        assert ch.check_offline is True
+
+    def test_check_all_defaults_to_online(self, tmp_config, monkeypatch):
+        ch = _StubChannel("twitter", "Twitter/X", 1, "ok", "live")
+        monkeypatch.setattr(doctor, "get_all_channels", lambda: [ch])
+
+        doctor.check_all(tmp_config)
+
+        assert ch.check_offline is False
 
 
 class TestRunFixes:

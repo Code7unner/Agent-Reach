@@ -117,7 +117,7 @@ class TestDoctorFix:
     def test_doctor_fix_runs_fixes_and_reports(self, monkeypatch, capsys):
         import autoresearch.doctor as doctor
 
-        monkeypatch.setattr(doctor, "check_all", lambda config: {})
+        monkeypatch.setattr(doctor, "check_all", lambda config, offline=False: {})
         monkeypatch.setattr(doctor, "format_report", lambda results: "REPORT")
         called = {}
 
@@ -137,10 +137,46 @@ class TestDoctorFix:
         assert "youtube" in out and "enabled JS runtime" in out
         assert "exa_search" in out  # unchanged-but-actionable still surfaced
 
+    def test_doctor_offline_forwards_offline_flag(self, monkeypatch):
+        import autoresearch.doctor as doctor
+
+        seen = {}
+
+        def fake_check_all(config, offline=False):
+            seen["offline"] = offline
+            return {}
+
+        monkeypatch.setattr(doctor, "check_all", fake_check_all)
+        monkeypatch.setattr(doctor, "format_report", lambda results: "REPORT")
+        monkeypatch.setattr(cli, "_install_skill", lambda: None)
+
+        with patch("sys.argv", ["autoresearch", "doctor", "--offline"]):
+            main()
+
+        assert seen["offline"] is True
+
+    def test_doctor_default_is_online(self, monkeypatch):
+        import autoresearch.doctor as doctor
+
+        seen = {}
+
+        def fake_check_all(config, offline=False):
+            seen["offline"] = offline
+            return {}
+
+        monkeypatch.setattr(doctor, "check_all", fake_check_all)
+        monkeypatch.setattr(doctor, "format_report", lambda results: "REPORT")
+        monkeypatch.setattr(cli, "_install_skill", lambda: None)
+
+        with patch("sys.argv", ["autoresearch", "doctor"]):
+            main()
+
+        assert seen["offline"] is False
+
     def test_doctor_without_fix_does_not_run_fixes(self, monkeypatch):
         import autoresearch.doctor as doctor
 
-        monkeypatch.setattr(doctor, "check_all", lambda config: {})
+        monkeypatch.setattr(doctor, "check_all", lambda config, offline=False: {})
         monkeypatch.setattr(doctor, "format_report", lambda results: "REPORT")
         monkeypatch.setattr(cli, "_install_skill", lambda: None)
 
@@ -198,7 +234,7 @@ class TestCheckUpdateRetry:
 
         sequence = [
             R(429, headers={"Retry-After": "3"}),
-            R(200, payload={"tag_name": "v1.0.1"}),
+            R(200, payload={"tag_name": "v1.0.2"}),
         ]
 
         with patch("requests.get", side_effect=sequence):

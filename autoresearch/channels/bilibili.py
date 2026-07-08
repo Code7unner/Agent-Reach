@@ -35,12 +35,19 @@ class BilibiliChannel(Channel):
         d = urlparse(url).netloc.lower()
         return "bilibili.com" in d or "b23.tv" in d
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
         if not shutil.which("yt-dlp"):
             return "off", "yt-dlp not installed. Install: pip install yt-dlp"
 
         proxy = (config.get("bilibili_proxy") if config else None) or os.environ.get("BILIBILI_PROXY")
         has_bili_cli = bool(shutil.which("bili"))
+
+        if offline:
+            # Skip the Bilibili search-API reachability probe; report install status only.
+            extra = ("Search/trending/rankings: bili-cli available" if has_bili_cli
+                     else "Search: Bilibili API (--offline: not probed)")
+            video = "Video reading: yt-dlp (proxy configured)" if proxy else "Video reading: yt-dlp"
+            return "ok", f"{video}. {extra}"
 
         parts = []
 

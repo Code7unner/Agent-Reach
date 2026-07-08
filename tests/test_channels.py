@@ -20,6 +20,345 @@ def _which_map(present):
     return lambda tool: f"/usr/bin/{tool}" if tool in present else None
 
 
+class TestChannelSearch:
+    """Channels expose a uniform `search(query, limit) -> research rows`.
+    `research` routes through these (single source of truth); the per-tool
+    functions that used to live in adapters.py are gone."""
+
+    from types import SimpleNamespace as _NS
+
+    def test_base_not_searchable(self):
+        from autoresearch.channels.base import Channel
+        assert Channel.searchable is False
+
+    def test_github_search_normalizes_rows(self, monkeypatch):
+        from autoresearch.channels.github import GitHubChannel
+        sample = [{"fullName": "tokio-rs/tokio", "description": "async runtime",
+                   "url": "https://github.com/tokio-rs/tokio", "updatedAt": "2026-01-01"}]
+        monkeypatch.setattr("autoresearch.channels.github.subprocess.run",
+                            lambda cmd, **kw: self._NS(returncode=0, stdout=json.dumps(sample), stderr=""))
+        rows = GitHubChannel().search("async rust", 5)
+        assert GitHubChannel.searchable is True
+        assert rows[0]["source"] == "github"
+        assert rows[0]["url"] == "https://github.com/tokio-rs/tokio"
+        for k in ("source", "title", "url", "snippet", "date"):
+            assert k in rows[0]
+
+    def test_github_search_neutralizes_flag_smuggling(self, monkeypatch):
+        from autoresearch.channels.github import GitHubChannel
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return self._NS(returncode=0, stdout="[]", stderr="")
+
+        monkeypatch.setattr("autoresearch.channels.github.subprocess.run", fake_run)
+        GitHubChannel().search("--version", 5)
+        cmd = captured["cmd"]
+        assert "--" in cmd and cmd.index("--") < cmd.index("--version")
+
+    def test_github_search_raises_on_nonzero_exit(self, monkeypatch):
+        from autoresearch.channels.github import GitHubChannel
+        monkeypatch.setattr("autoresearch.channels.github.subprocess.run",
+                            lambda cmd, **kw: self._NS(returncode=1, stdout="", stderr="gh: not logged in"))
+        import pytest
+        with pytest.raises(Exception) as ei:
+            GitHubChannel().search("anything", 5)
+        assert "not logged in" in str(ei.value)
+
+    def test_twitter_search_normalizes_rows(self, monkeypatch):
+        from autoresearch.channels.twitter import TwitterChannel
+        sample = [{"id": "123", "author": "@alice", "text": "tokio is great for async rust",
+                   "time": "Jun 09 16:25"}]
+        # twitter.search runs through utils.proc.run_with_retry, so patch the
+        # subprocess.run that helper actually calls.
+        monkeypatch.setattr("autoresearch.utils.proc.subprocess.run",
+                            lambda cmd, **kw: self._NS(returncode=0, stdout=json.dumps(sample), stderr=""))
+        rows = TwitterChannel().search("rust async", 5)
+        assert rows[0]["source"] == "twitter"
+        assert rows[0]["url"] == "https://x.com/alice/status/123"
+        assert "tokio" in rows[0]["snippet"]
+
+    def test_twitter_search_uses_xquik_when_configured(self, monkeypatch):
+        from autoresearch.channels.twitter import TwitterChannel
+        captured = {}
+
+        class _Config:
+            def get(self, key, default=None):
+                values = {
+                    "xquik_api_key": "test-key",
+                    "xquik_base_url": "https://xquik.test",
+                }
+                return values.get(key, default)
+
+        class _Response:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "tweets": [
+                        {
+                            "id": "42",
+                            "text": "xquik search works",
+                            "created": "2026-06-21T00:00:00Z",
+                            "author": {"username": "alice"},
+                        }
+                    ]
+                }
+
+        def fake_get(url, **kwargs):
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return _Response()
+
+        monkeypatch.setattr("autoresearch.channels.twitter.Config", _Config)
+        monkeypatch.setattr("autoresearch.channels.twitter.requests.get", fake_get)
+
+        rows = TwitterChannel().search("agent tools", 500)
+
+        assert captured["url"] == "https://xquik.test/api/v1/x/tweets/search"
+        assert captured["kwargs"]["headers"] == {"x-api-key": "test-key"}
+        assert captured["kwargs"]["params"] == {
+            "q": "agent tools",
+            "queryType": "Latest",
+            "limit": "200",
+        }
+        assert rows == [
+            {
+                "source": "twitter",
+                "title": "@alice: xquik search works",
+                "url": "https://x.com/alice/status/42",
+                "snippet": "xquik search works",
+                "date": "2026-06-21T00:00:00Z",
+            }
+        ]
+
+    def test_twitter_search_neutralizes_flag_smuggling(self, monkeypatch):
+        from autoresearch.channels.twitter import TwitterChannel
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return self._NS(returncode=0, stdout="[]", stderr="")
+
+        monkeypatch.setattr("autoresearch.utils.proc.subprocess.run", fake_run)
+        TwitterChannel().search("-n 9999", 5)
+        cmd = captured["cmd"]
+        assert "--" in cmd and cmd.index("--") < cmd.index("-n 9999")
+
+    def test_exa_search_escapes_quotes(self, monkeypatch):
+        from autoresearch.channels.exa_search import ExaSearchChannel
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return self._NS(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("autoresearch.channels.exa_search.subprocess.run", fake_run)
+        ExaSearchChannel().search('foo") + evil("', 5)
+        call_arg = captured["cmd"][2]
+        assert '") + evil("' not in call_arg
+        assert '\\"' in call_arg
+
+    def test_hackernews_search_maps_rows(self, monkeypatch):
+        from autoresearch.channels.hackernews import HackerNewsChannel
+        monkeypatch.setattr(HackerNewsChannel, "search_stories",
+                            lambda self, q, limit=20: [{"objectID": "42", "title": "T",
+                                                        "url": "", "created_at": "2020"}])
+        rows = HackerNewsChannel().search("q", 5)
+        assert rows[0]["source"] == "hackernews"
+        assert rows[0]["url"] == "https://news.ycombinator.com/item?id=42"
+        assert rows[0]["date"] == "2020"
+
+    def test_reddit_search_maps_rows(self, monkeypatch):
+        from autoresearch.channels.reddit import RedditChannel
+        envelope = {"ok": True, "schema_version": "1", "data": [
+            {"title": "Async in Rust", "permalink": "/r/rust/comments/abc/async/",
+             "url": "https://example.com/x", "subreddit": "rust", "author": "bob",
+             "score": 42, "num_comments": 7, "created_utc": 1700000000.0,
+             "selftext": "tokio vs async-std"}]}
+        monkeypatch.setattr("autoresearch.channels.reddit.subprocess.run",
+                            lambda cmd, **kw: self._NS(returncode=0, stdout=json.dumps(envelope), stderr=""))
+        rows = RedditChannel().search("rust async", 5)
+        assert RedditChannel.searchable is True
+        assert rows[0]["source"] == "reddit"
+        assert rows[0]["url"] == "https://www.reddit.com/r/rust/comments/abc/async/"
+        assert "tokio" in rows[0]["snippet"]
+        assert rows[0]["date"] == "2023-11-14"
+
+    def test_reddit_search_neutralizes_flag_smuggling(self, monkeypatch):
+        from autoresearch.channels.reddit import RedditChannel
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return self._NS(returncode=0, stdout='{"ok":true,"data":[]}', stderr="")
+
+        monkeypatch.setattr("autoresearch.channels.reddit.subprocess.run", fake_run)
+        RedditChannel().search("--help", 5)
+        cmd = captured["cmd"]
+        assert "--" in cmd and cmd.index("--") < cmd.index("--help")
+
+    def test_reddit_search_raises_on_nonzero_exit(self, monkeypatch):
+        from autoresearch.channels.reddit import RedditChannel
+        monkeypatch.setattr("autoresearch.channels.reddit.subprocess.run",
+                            lambda cmd, **kw: self._NS(returncode=1, stdout="", stderr="not logged in"))
+        import pytest
+        with pytest.raises(Exception) as ei:
+            RedditChannel().search("q", 5)
+        assert "not logged in" in str(ei.value)
+
+    def test_youtube_search_maps_rows(self, monkeypatch):
+        from autoresearch.channels.youtube import YouTubeChannel
+        data = {"entries": [{"id": "FUg1", "title": "Rust async runtime",
+                             "url": "https://www.youtube.com/watch?v=FUg1",
+                             "uploader": "Rusty", "description": "a deep dive talk",
+                             "timestamp": 1700000000}]}
+        monkeypatch.setattr("autoresearch.channels.youtube.subprocess.run",
+                            lambda cmd, **kw: self._NS(returncode=0, stdout=json.dumps(data), stderr=""))
+        rows = YouTubeChannel().search("rust async", 3)
+        assert YouTubeChannel.searchable is True
+        assert rows[0]["source"] == "youtube"
+        assert rows[0]["url"] == "https://www.youtube.com/watch?v=FUg1"
+        assert "deep dive" in rows[0]["snippet"]
+        assert rows[0]["date"] == "2023-11-14"
+
+    def test_youtube_search_uses_ytsearch_target(self, monkeypatch):
+        from autoresearch.channels.youtube import YouTubeChannel
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return self._NS(returncode=0, stdout='{"entries":[]}', stderr="")
+
+        monkeypatch.setattr("autoresearch.channels.youtube.subprocess.run", fake_run)
+        YouTubeChannel().search("llm agents", 4)
+        assert any(str(a).startswith("ytsearch4:") for a in captured["cmd"])
+
+    def test_arxiv_search_maps_atom_rows(self, monkeypatch):
+        from autoresearch.channels.arxiv import ArxivChannel
+        atom = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Attention Is All You Need</title>
+    <id>http://arxiv.org/abs/1706.03762v5</id>
+    <published>2017-06-12T17:57:34Z</published>
+    <summary>The dominant sequence transduction models are based on RNNs.</summary>
+    <author><name>Ashish Vaswani</name></author>
+  </entry>
+</feed>"""
+        monkeypatch.setattr("autoresearch.channels.arxiv._get_text",
+                            lambda url, timeout=10: atom)
+        rows = ArxivChannel().search("transformers", 5)
+        assert ArxivChannel.searchable is True
+        assert rows[0]["source"] == "arxiv"
+        assert rows[0]["url"] == "http://arxiv.org/abs/1706.03762v5"
+        assert rows[0]["title"] == "Attention Is All You Need"
+        assert rows[0]["date"] == "2017-06-12"
+        assert "dominant" in rows[0]["snippet"]
+
+    def test_arxiv_can_handle(self):
+        from autoresearch.channels.arxiv import ArxivChannel
+        ch = ArxivChannel()
+        assert ch.can_handle("https://arxiv.org/abs/1706.03762") is True
+        assert ch.can_handle("https://example.com") is False
+
+    def test_stackoverflow_search_maps_rows(self, monkeypatch):
+        from autoresearch.channels.stackoverflow import StackOverflowChannel
+        payload = {"items": [{"title": "How to do X in Rust?",
+                              "link": "https://stackoverflow.com/questions/1/x",
+                              "creation_date": 1620444864, "score": 8,
+                              "answer_count": 2, "tags": ["rust"]}],
+                   "quota_remaining": 299}
+        monkeypatch.setattr("autoresearch.channels.stackoverflow._get_json",
+                            lambda url, timeout=10: payload)
+        rows = StackOverflowChannel().search("rust x", 5)
+        assert StackOverflowChannel.searchable is True
+        assert rows[0]["source"] == "stackoverflow"
+        assert rows[0]["url"] == "https://stackoverflow.com/questions/1/x"
+        assert rows[0]["date"] == "2021-05-08"
+        assert "rust" in rows[0]["snippet"]
+
+    def test_stackoverflow_can_handle(self):
+        from autoresearch.channels.stackoverflow import StackOverflowChannel
+        ch = StackOverflowChannel()
+        assert ch.can_handle("https://stackoverflow.com/questions/1/x") is True
+        assert ch.can_handle("https://example.com") is False
+
+    def test_new_channels_registered(self):
+        from autoresearch.channels import get_channel
+        assert get_channel("arxiv") is not None
+        assert get_channel("stackoverflow") is not None
+
+    def test_wikipedia_search_maps_rows(self, monkeypatch):
+        from autoresearch.channels.wikipedia import WikipediaChannel
+        payload = {"query": {"search": [{
+            "title": "Transformer (deep learning)", "pageid": 61603971,
+            "timestamp": "2026-06-17T19:00:42Z",
+            "snippet": 'In deep learning, the <span class="searchmatch">transformer</span> is a family'}]}}
+        monkeypatch.setattr("autoresearch.channels.wikipedia.get_json",
+                            lambda url, timeout=10: payload)
+        rows = WikipediaChannel().search("transformer", 5)
+        assert WikipediaChannel.searchable is True
+        assert rows[0]["source"] == "wikipedia"
+        assert "61603971" in rows[0]["url"]
+        assert rows[0]["date"] == "2026-06-17"
+        assert "<span" not in rows[0]["snippet"]  # HTML stripped
+        assert "transformer is a family" in rows[0]["snippet"]
+
+    def test_wikipedia_can_handle(self):
+        from autoresearch.channels.wikipedia import WikipediaChannel
+        ch = WikipediaChannel()
+        assert ch.can_handle("https://en.wikipedia.org/wiki/Transformer") is True
+        assert ch.can_handle("https://example.com") is False
+
+    def test_semanticscholar_search_maps_rows(self, monkeypatch):
+        from autoresearch.channels.semanticscholar import SemanticScholarChannel
+        payload = {"data": [{"paperId": "abc",
+                             "url": "https://www.semanticscholar.org/paper/abc",
+                             "title": "Masked-attention Mask Transformer", "year": 2021,
+                             "abstract": "We present a new architecture.",
+                             "authors": [{"name": "A B"}]}]}
+        monkeypatch.setattr("autoresearch.channels.semanticscholar.get_json",
+                            lambda url, timeout=10: payload)
+        rows = SemanticScholarChannel().search("transformer", 5)
+        assert SemanticScholarChannel.searchable is True
+        assert rows[0]["source"] == "semanticscholar"
+        assert rows[0]["url"] == "https://www.semanticscholar.org/paper/abc"
+        assert rows[0]["date"] == "2021"
+        assert "new architecture" in rows[0]["snippet"]
+
+    def test_pubmed_search_maps_rows(self, monkeypatch):
+        from autoresearch.channels.pubmed import PubMedChannel
+
+        def fake_get_json(url, timeout=10):
+            if "esearch" in url:
+                return {"esearchresult": {"idlist": ["42324300"]}}
+            return {"result": {"uids": ["42324300"], "42324300": {
+                "title": "Deletion of activating transcription factor 3",
+                "sortpubdate": "2026/06/21 00:00", "source": "Sci Rep",
+                "authors": [{"name": "Su L"}]}}}
+
+        monkeypatch.setattr("autoresearch.channels.pubmed.get_json", fake_get_json)
+        rows = PubMedChannel().search("crispr", 5)
+        assert PubMedChannel.searchable is True
+        assert rows[0]["source"] == "pubmed"
+        assert rows[0]["url"] == "https://pubmed.ncbi.nlm.nih.gov/42324300/"
+        assert rows[0]["date"] == "2026-06-21"
+        assert "Sci Rep" in rows[0]["snippet"]
+
+    def test_pubmed_empty_idlist_returns_no_rows(self, monkeypatch):
+        from autoresearch.channels.pubmed import PubMedChannel
+        monkeypatch.setattr("autoresearch.channels.pubmed.get_json",
+                            lambda url, timeout=10: {"esearchresult": {"idlist": []}})
+        assert PubMedChannel().search("zzznoresults", 5) == []
+
+    def test_more_channels_registered(self):
+        from autoresearch.channels import get_channel
+        for name in ("wikipedia", "semanticscholar", "pubmed"):
+            assert get_channel(name) is not None, name
+
+
 class TestChannelFix:
     """`fix()` auto-applies the fixable setup steps (doctor --fix)."""
 
@@ -724,6 +1063,10 @@ class TestRedditChannel:
         assert status == "off"
         assert "rdt-cli" in msg
         assert "public-clis/rdt-cli" in msg
+        # Guard: the install command must be satisfiable. PyPI's latest is 0.4.1, so a
+        # `>=0.4.2` pin makes `pip install` fail outright — never reintroduce it.
+        assert ">=0.4.2" not in msg
+        assert "pip install rdt-cli" in msg
 
     def test_reports_ok_when_authenticated(self, monkeypatch):
         monkeypatch.setattr(shutil, "which", lambda _: "/usr/local/bin/rdt")

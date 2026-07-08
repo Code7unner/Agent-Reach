@@ -17,6 +17,7 @@ from .bilibili import BilibiliChannel
 from .exa_search import ExaSearchChannel
 from .xiaohongshu import XiaoHongShuChannel
 from .douyin import DouyinChannel
+from .tiktok import TikTokChannel
 from .linkedin import LinkedInChannel
 from .wechat import WeChatChannel
 from .weibo import WeiboChannel
@@ -24,6 +25,11 @@ from .xiaoyuzhou import XiaoyuzhouChannel
 from .v2ex import V2EXChannel
 from .xueqiu import XueqiuChannel
 from .hackernews import HackerNewsChannel
+from .arxiv import ArxivChannel
+from .stackoverflow import StackOverflowChannel
+from .wikipedia import WikipediaChannel
+from .semanticscholar import SemanticScholarChannel
+from .pubmed import PubMedChannel
 
 
 ALL_CHANNELS: List[Channel] = [
@@ -34,6 +40,7 @@ ALL_CHANNELS: List[Channel] = [
     BilibiliChannel(),
     XiaoHongShuChannel(),
     DouyinChannel(),
+    TikTokChannel(),
     LinkedInChannel(),
     WeChatChannel(),
     WeiboChannel(),
@@ -41,6 +48,11 @@ ALL_CHANNELS: List[Channel] = [
     V2EXChannel(),
     XueqiuChannel(),
     HackerNewsChannel(),
+    ArxivChannel(),
+    StackOverflowChannel(),
+    WikipediaChannel(),
+    SemanticScholarChannel(),
+    PubMedChannel(),
     RSSChannel(),
     ExaSearchChannel(),
     WebChannel(),

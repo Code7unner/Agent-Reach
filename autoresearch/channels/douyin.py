@@ -17,7 +17,7 @@ class DouyinChannel(Channel):
         d = urlparse(url).netloc.lower()
         return "douyin.com" in d or "iesdouyin.com" in d
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
         mcporter = shutil.which("mcporter")
         if not mcporter:
             return "off", (
@@ -42,6 +42,10 @@ class DouyinChannel(Channel):
                 )
         except Exception:
             return "off", "mcporter connection error"
+
+        if offline:
+            return "ok", "Douyin MCP configured (--offline: not probed)"
+
         # Verify MCP connectivity by listing available tools instead of
         # calling with a hardcoded (invalid) share link that always fails.
         try:

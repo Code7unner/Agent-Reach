@@ -18,7 +18,7 @@ class XiaoyuzhouChannel(Channel):
         d = urlparse(url).netloc.lower()
         return "xiaoyuzhoufm.com" in d
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
         # Check ffmpeg
         if not shutil.which("ffmpeg"):
             return "off", (

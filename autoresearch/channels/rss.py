@@ -13,7 +13,7 @@ class RSSChannel(Channel):
     def can_handle(self, url: str) -> bool:
         return any(x in url.lower() for x in ["/feed", "/rss", ".xml", "atom"])
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
         try:
             import feedparser
             return "ok", "Can read RSS/Atom feeds"

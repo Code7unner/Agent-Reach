@@ -57,7 +57,7 @@ def run_research(
     adapters: Dict[str, SearchFn],
     channels: Optional[List[str]] = None,
     limit: int = 5,
-    timeout: float = 20.0,
+    timeout: float = 45.0,
     skipped: Optional[List[str]] = None,
     unknown: Optional[List[str]] = None,
 ) -> dict:
@@ -66,6 +66,17 @@ def run_research(
     Returns ``{"query", "results": {channel: [rows]}, "_meta": {...}}``. A channel
     that errors or exceeds ``timeout`` is omitted from ``results`` and recorded under
     ``_meta.errors``; it never blocks the others.
+
+    ``timeout`` is the OUTER deadline for the whole fan-out and must stay >= the
+    slowest per-channel search budget (channels run their own subprocess timeouts of
+    up to ~45s). If it is smaller, a valid-but-slow channel gets cut here and
+    mislabeled ``TimeoutError`` even though its own call would have returned.
+
+    A channel that runs cleanly but yields zero rows (e.g. a keyword API given a long
+    natural-language query, or everything deduped away) is NOT an error: it stays in
+    ``_meta.channels_queried``, is listed in ``_meta.channels_empty``, and its count
+    appears in ``_meta.result_counts`` so "ran, found nothing" is never confused with
+    "silently dropped".
 
     ``skipped`` (channels intentionally not queried — e.g. inactive) and ``unknown``
     (requested names that aren't searchable channels) are reported verbatim in
@@ -126,13 +137,21 @@ def run_research(
         if kept:
             results[channel] = kept
 
+    # Per-channel result accounting for every channel that ran without error, so a
+    # zero-result channel is reported honestly instead of vanishing from the payload.
+    queried = [c for c in selected if c not in errors]
+    result_counts = {c: len(results.get(c, [])) for c in queried}
+    channels_empty = sorted(c for c, n in result_counts.items() if n == 0)
+
     return {
         "query": question,
         "results": results,
         "_meta": {
-            "channels_queried": [c for c in selected if c not in errors],
+            "channels_queried": queried,
             "channels_skipped": list(skipped or []),
             "channels_unknown": list(unknown or []),
+            "channels_empty": channels_empty,
+            "result_counts": result_counts,
             "errors": errors,
         },
     }

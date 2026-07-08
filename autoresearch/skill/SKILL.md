@@ -2,9 +2,10 @@
 name: autoresearch
 description: >
   Give your AI agent eyes to see the entire internet.
-  Search and read 17 platforms: Twitter/X, Reddit, Hacker News, YouTube, GitHub, Bilibili,
-  XiaoHongShu, Douyin, Weibo, WeChat Articles, Xiaoyuzhou Podcast, LinkedIn,
-  V2EX, Xueqiu, RSS, Exa web search, and any web page.
+  Search and read 23 platforms: Twitter/X, Reddit, Hacker News, YouTube, GitHub, Bilibili,
+  XiaoHongShu, Douyin, TikTok, Weibo, WeChat Articles, Xiaoyuzhou Podcast, LinkedIn,
+  V2EX, Xueqiu, arXiv, Stack Overflow, Wikipedia, Semantic Scholar, PubMed,
+  RSS, Exa web search, and any web page.
   Zero config for 8 channels. Use when the user asks to search, read, or interact
   on any supported platform, shares a URL, or asks to search the web.
   Triggers: "search twitter", "search xiaohongshu", "watch this video",
@@ -20,7 +21,7 @@ metadata:
 
 # autoresearch — Usage Guide
 
-Upstream tools for 17 platforms. Call them directly.
+Upstream tools for 23 platforms. Call them directly.
 
 Run `autoresearch doctor` to check which channels are available.
 
@@ -45,12 +46,15 @@ mcporter call 'exa.get_code_context_exa(query: "code question", tokensNum: 3000)
 
 ```bash
 autoresearch research "your question" -n 5                  # fan out across the ACTIVE searchable channels
-autoresearch research "your question" --channels hackernews,github,exa,twitter
+autoresearch research "your question" --channels hackernews,github,exa_search,twitter
 ```
 
 Fans the query across searchable channels concurrently and returns grouped,
 deduped JSON: `{query, results: {channel: [{source, title, url, snippet, date}]},
-_meta: {channels_queried, channels_skipped, channels_unknown, errors}}`.
+_meta: {channels_queried, channels_skipped, channels_unknown, errors}}`. Each channel
+is queried through its own `search()` (single source of truth — the same upstream tool
+used elsewhere), so result keys are channel names (`exa_search`, not `exa` — though
+`--channels exa` is accepted as an alias).
 
 - **Default** (no `--channels`): queries only the channels `doctor` reports active;
   searchable-but-inactive channels are listed in `_meta.channels_skipped` (not errored).
@@ -58,6 +62,9 @@ _meta: {channels_queried, channels_skipped, channels_unknown, errors}}`.
   searchable channels — a real but non-searchable channel like `reddit`, or a typo —
   are reported in `_meta.channels_unknown`.
 - A slow/failed channel is recorded in `_meta.errors` and never blocks the others.
+- Currently searchable: `hackernews`, `github`, `exa_search`, `twitter`, `reddit`
+  (needs `rdt login`), `youtube`, `arxiv`, `stackoverflow`, `wikipedia`,
+  `semanticscholar`, `pubmed`.
 
 > Glue-only: `research` **gathers and dedupes** — it does NOT synthesize. You (the
 > agent) read the cited JSON and write the answer. No LLM, no API key. Use this when
@@ -152,6 +159,20 @@ mcporter call 'douyin.get_douyin_download_link(share_link: "https://v.douyin.com
 ```
 
 > No login needed.
+
+## TikTok (yt-dlp)
+
+```bash
+yt-dlp --dump-json "https://www.tiktok.com/@user/video/ID"   # video metadata
+yt-dlp --write-sub --write-auto-sub --skip-download -o "/tmp/%(id)s" "URL"
+                                                             # subtitles, then read the .vtt
+yt-dlp --flat-playlist -J "https://www.tiktok.com/@username"  # a user's recent videos
+```
+
+> Read-only: yt-dlp has no working TikTok keyword search (`tiktok:tag` is broken
+> upstream), so TikTok does not join `autoresearch research`. Share a video/profile
+> URL and read it directly. Some videos are region-gated — configure a proxy or
+> `--cookies-from-browser chrome` if a fetch fails.
 
 ## WeChat Articles
 
@@ -341,6 +362,7 @@ for e in feedparser.parse('FEED_URL').entries[:5]:
 ## Troubleshooting
 
 - **Channel not working?** Run `autoresearch doctor` — it shows status and fix instructions. Add `--fix` (`autoresearch doctor --fix`) to auto-apply the fixable ones (yt-dlp JS runtime, Exa/mcporter entry, config-file permissions); anything needing a new install or your credentials is left as a manual hint.
+- **Session expired silently?** `doctor` probes session channels (Twitter, LinkedIn, XiaoHongShu, etc.) for liveness and lists any configured-but-dead session under "⚠ Needs attention — re-authenticate". Use `autoresearch doctor --offline` to skip the network probes and report install/config status only (fast, offline).
 - **Twitter fetch failed?** Ensure `undici` is installed: `npm install -g undici`. Configure a proxy if needed: `autoresearch configure proxy URL`.
 
 ## Setting Up a Channel ("help me configure XXX")

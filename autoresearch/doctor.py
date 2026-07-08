@@ -9,11 +9,15 @@ from autoresearch.config import Config
 from autoresearch.channels import get_all_channels
 
 
-def check_all(config: Config) -> Dict[str, dict]:
-    """Check all channels and return status dict."""
+def check_all(config: Config, offline: bool = False) -> Dict[str, dict]:
+    """Check all channels and return status dict.
+
+    When ``offline`` is True, channels skip any network liveness probe and report
+    install/config status only (used by ``doctor --offline``).
+    """
     results = {}
     for ch in get_all_channels():
-        status, message = ch.check(config)
+        status, message = ch.check(config, offline=offline)
         results[ch.name] = {
             "status": status,
             "name": ch.description,
@@ -123,10 +127,21 @@ def format_report(results: Dict[str, dict]) -> str:
     status_color = "green" if ok_count == total else ("yellow" if ok_count > 0 else "red")
     lines.append(f"Status: [{status_color}]{ok_count}/{total}[/{status_color}] channels available")
 
-    # Summarize inactive optional channels in one line instead of listing each
+    # Split inactive optional channels: `warn` = configured but the live probe
+    # failed (a session that silently expired — surface it loudly for re-auth);
+    # `off` = the tool/credentials are absent (offer to unlock).
     all_inactive = list(tier1_inactive.values()) + list(tier2_inactive.values())
-    if all_inactive:
-        names = [r["name"] for r in all_inactive]
+    needs_attention = [r for r in all_inactive if r["status"] != "off"]
+    can_unlock = [r for r in all_inactive if r["status"] == "off"]
+
+    if needs_attention:
+        lines.append("")
+        lines.append("[bold yellow]⚠ Needs attention — re-authenticate:[/bold yellow]")
+        for r in needs_attention:
+            lines.append(f"  [yellow][!][/yellow]  [bold]{escape(r['name'])}[/bold] — {escape(r['message'])}")
+
+    if can_unlock:
+        names = [r["name"] for r in can_unlock]
         lines.append(
             f"There are {len(names)} more optional channels you can unlock "
             f"({', '.join(names)}); just tell your Agent \"install XXX for me\""

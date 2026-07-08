@@ -16,7 +16,7 @@ class WebChannel(Channel):
     def can_handle(self, url: str) -> bool:
         return True  # Fallback — handles any URL
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
         return "ok", "Read any web page via Jina Reader (curl https://r.jina.ai/URL)"
 
     def read(self, url: str) -> str:

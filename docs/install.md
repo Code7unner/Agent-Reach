@@ -409,6 +409,7 @@ If the user wants a different agent to handle it, let them choose.
 | `autoresearch install --env=auto --dry-run` | Preview what would be done |
 | `autoresearch doctor` | Show channel status |
 | `autoresearch doctor --fix` | Auto-fix the fixable (yt-dlp JS runtime, Exa/mcporter, config perms) |
+| `autoresearch doctor --offline` | Skip network liveness probes; report install/config status only |
 | `autoresearch watch` | Quick health + update check (for scheduled tasks) |
 | `autoresearch check-update` | Check for new versions |
 | `autoresearch configure twitter-cookies "..."` | Unlock Twitter search + posting |

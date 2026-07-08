@@ -1,8 +1,69 @@
 # -*- coding: utf-8 -*-
 """Contract tests for channel adapters."""
 
+import importlib
+
+import pytest
+
 from autoresearch.channels import get_all_channels
 from autoresearch.config import Config
+
+
+# (module, network helper that must NOT run under offline=True, channel class)
+_PUBLIC_API_PROBES = [
+    ("autoresearch.channels.hackernews", "_get_json", "HackerNewsChannel"),
+    ("autoresearch.channels.arxiv", "_get_text", "ArxivChannel"),
+    ("autoresearch.channels.stackoverflow", "_get_json", "StackOverflowChannel"),
+    ("autoresearch.channels.wikipedia", "get_json", "WikipediaChannel"),
+    ("autoresearch.channels.pubmed", "get_json", "PubMedChannel"),
+    ("autoresearch.channels.semanticscholar", "_get_json_retrying", "SemanticScholarChannel"),
+    ("autoresearch.channels.v2ex", "_get_json", "V2EXChannel"),
+]
+
+
+@pytest.mark.parametrize("modpath,symbol,clsname", _PUBLIC_API_PROBES)
+def test_public_api_channel_offline_skips_network(monkeypatch, modpath, symbol, clsname):
+    """offline=True must report install/config status WITHOUT a network probe — the
+    probes cost the bulk of `doctor --offline` / default `research` latency."""
+    mod = importlib.import_module(modpath)
+
+    def boom(*args, **kwargs):
+        raise AssertionError(f"{modpath}.{symbol} hit the network during an offline check")
+
+    monkeypatch.setattr(mod, symbol, boom)
+    status, message = getattr(mod, clsname)().check(offline=True)
+    assert status == "ok"
+    assert "offline" in message.lower()
+
+
+def test_github_offline_skips_auth_network(monkeypatch):
+    import subprocess
+
+    from autoresearch.channels.github import GitHubChannel
+
+    monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/gh" if c == "gh" else None)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("gh auth status (network) ran during an offline check")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    status, message = GitHubChannel().check(offline=True)
+    assert status == "ok"
+    assert "offline" in message.lower()
+
+
+def test_bilibili_offline_skips_search_api(monkeypatch):
+    from autoresearch.channels import bilibili as bmod
+
+    monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/yt-dlp" if c == "yt-dlp" else None)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("Bilibili search API probed during an offline check")
+
+    monkeypatch.setattr(bmod, "_search_api_ok", boom)
+    status, message = bmod.BilibiliChannel().check(offline=True)
+    assert status == "ok"
+    assert "offline" in message.lower()
 
 
 def test_channel_registry_contract():
@@ -25,6 +86,18 @@ def test_channel_check_contract_with_minimal_runtime(monkeypatch, tmp_path):
 
     for ch in get_all_channels():
         status, message = ch.check(config)
+        assert status in {"ok", "warn", "off", "error"}
+        assert isinstance(message, str) and message.strip()
+
+
+def test_every_channel_check_accepts_offline(monkeypatch, tmp_path):
+    """Every channel's check() must accept the `offline` kwarg so `doctor --offline`
+    (which routes through check_all(..., offline=True)) never raises TypeError."""
+    monkeypatch.setattr("shutil.which", lambda _cmd: None)
+    config = Config(config_path=tmp_path / "config.yaml")
+
+    for ch in get_all_channels():
+        status, message = ch.check(config, offline=True)
         assert status in {"ok", "warn", "off", "error"}
         assert isinstance(message, str) and message.strip()
 
@@ -142,6 +215,7 @@ def test_channel_can_handle_contract():
         "bilibili": "https://www.bilibili.com/video/BV1xx411",
         "xiaohongshu": "https://www.xiaohongshu.com/explore/123",
         "douyin": "https://www.douyin.com/video/123",
+        "tiktok": "https://www.tiktok.com/@user/video/7300000000000000000",
         "linkedin": "https://www.linkedin.com/in/test",
         "weibo": "https://weibo.com/u/1749127163",
         "rss": "https://example.com/feed.xml",

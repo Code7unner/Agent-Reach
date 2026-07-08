@@ -9,12 +9,15 @@ Xiaoyuzhou, LinkedIn, V2EX, Xueqiu, RSS, Exa web search, any web page). It's a
 reimplements or modifies them. Read CLAUDE.md first; it is authoritative.
 
 ## Current state
-- Version 1.0.1. ~157 tests pass (`pytest tests/ -v`).
+- Version 1.0.2. ~195 tests pass (`pytest tests/ -v`). 22 channels registered.
 - The project was rebranded from "Agent Reach" to "autoresearch" (CLI command,
   package `autoresearch/`, class `AutoResearch`). Rebrand is merged to main.
 - Active channels depend on the machine — run `autoresearch doctor` to see status.
   On the dev machine these were active: GitHub, Twitter/X, LinkedIn, HN, V2EX, RSS,
   Exa, Web (Jina), WeChat.
+- `research` fans out across up to 11 searchable channels (hackernews, github,
+  exa_search, twitter, reddit, youtube, arxiv, stackoverflow, wikipedia,
+  semanticscholar, pubmed), all via `Channel.search()`.
 
 ## Done (do not redo)
 - **#1 `research` command** — multi-source fan-out + dedupe, grouped cited JSON. (PR #9)
@@ -28,6 +31,25 @@ reimplements or modifies them. Read CLAUDE.md first; it is authoritative.
 - **#3 `doctor --fix`** — auto-applies yt-dlp JS-runtime config, Exa/mcporter entry, and
   config.yaml `chmod 0600`; manual hints for non-auto-fixable cases. New
   `Channel.fix(config) -> (changed, message)` mirrors `check()`. (PR #12)
+- **#9 Expand `research` connectors** — unified `Channel.search()` contract; migrated the
+  original 4 onto it (PR #15, closes follow-up #6); added Reddit + YouTube (PR #16),
+  arXiv + Stack Overflow (PR #17), and Wikipedia + Semantic Scholar + PubMed (PR #19).
+  Now up to 11 searchable channels. V2EX dropped (its API has no search endpoint —
+  `search()` is a documented stub).
+  - Known limitation: keyless **Semantic Scholar** is heavily 429-rate-limited (retries
+    once, then degrades gracefully). Optional follow-on: wire a free `S2_API_KEY`
+    (env/config) to make it reliable.
+
+- **#4 Session/cookie health checks in doctor** — every session channel now does a
+  real live/dead probe with a standardized status vocabulary (`off` = tool/creds
+  absent, `warn` = configured-but-dead → re-auth, `ok` = live). LinkedIn gained a real
+  liveness probe (`mcporter list linkedin`) instead of a bare config-entry grep; Twitter
+  "not installed" fixed `warn`→`off`. `format_report` now surfaces dead sessions in a
+  prominent "⚠ Needs attention — re-authenticate" block instead of burying them in the
+  "unlock more channels" line. New `doctor --offline` flag skips network probes
+  (`Channel.check(config, offline=False)` contract; offline → install/config status
+  only). Design: docs/design/session-health-checks.md. (this session)
+  - "Expiring soon" early-warning was explicitly de-scoped (liveness only).
 
 ## Hard rules (from CLAUDE.md — do not violate)
 - NEVER modify upstream open-source projects. autoresearch only routes/calls.
@@ -46,9 +68,6 @@ reimplements or modifies them. Read CLAUDE.md first; it is authoritative.
    practices: bundle workflows, sensible defaults, concrete examples, minimal tool
    count. Refs: AWS "MCP strategies" guide; Jfokus "MCP Servers Beyond 101".
    (Largest remaining item — design scope with the brainstorming skill first.)
-4. **Session/cookie health checks in doctor** — Twitter/LinkedIn/XHS sessions expire
-   silently; doctor should detect "expired/expiring" via a cheap probe, not just
-   "installed". Pairs naturally with the `Channel.check()`/`fix()` surface from #3.
 5. **Fetch-layer robustness** — unified retry/backoff + anti-bot/proxy fallbacks shared
    across channels. Refs: DEV "Reliable Web-Connected AI Agents Start at the Fetch
    Layer"; "Rate Limits & Anti-Bots in Agentic Scraping".
@@ -56,7 +75,11 @@ reimplements or modifies them. Read CLAUDE.md first; it is authoritative.
    users. (Smallest remaining item — good quick win.)
 
 ## Suggested starting point
-Two natural next steps: **#4 session health checks** (medium, builds directly on the
-`Channel.check()`/`fix()` surface just added in #3) or **#2 MCP server** (largest, do a
-brainstorming pass on tool shape/scope first). **#8 bilingual docs** is the easy quick
-win. Confirm direction with the user.
+Remaining: **#5 fetch-layer robustness**, **#2 MCP server** (largest — brainstorm tool
+shape first), **#8 bilingual docs** (quick win). Confirm direction with the user.
+
+> The #9 research-connector expansion is complete — now up to 11 searchable channels
+> (see "Done" above). Possible #9 follow-ons if desired: an `S2_API_KEY` for reliable
+> Semantic Scholar; more connectors (Weibo/XHS/Bilibili for China-focused research; npm;
+> note PyPI has no public search API); or read-by-URL support for the new search-only
+> channels (arXiv, Stack Overflow, Wikipedia, Semantic Scholar, PubMed).

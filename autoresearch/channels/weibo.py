@@ -17,7 +17,7 @@ class WeiboChannel(Channel):
         d = urlparse(url).netloc.lower()
         return "weibo.com" in d or "weibo.cn" in d
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
         mcporter = shutil.which("mcporter")
         if not mcporter:
             return "off", (
@@ -40,6 +40,10 @@ class WeiboChannel(Channel):
                 )
         except Exception:
             return "off", "mcporter connection error"
+
+        if offline:
+            return "ok", "Weibo MCP configured (--offline: not probed)"
+
         try:
             r = subprocess.run(
                 [mcporter, "list", "weibo"], capture_output=True,

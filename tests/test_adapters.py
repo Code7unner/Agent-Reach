@@ -1,162 +1,93 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for live adapter normalization (offline via monkeypatched subprocess)."""
+"""Tests for research adapter resolution (adapters.py).
 
-import json
-from types import SimpleNamespace
+The per-tool search functions now live on the channels themselves
+(`Channel.search`); adapters.py only resolves WHICH channels run. The channel
+search/normalization logic is tested in test_channels.py::TestChannelSearch.
+"""
 
 import autoresearch.adapters as A
 
 
-class _NoXquikConfig:
-    def get(self, key, default=None):
-        return default
+class _FakeChannel:
+    def __init__(self, name, searchable):
+        self.name = name
+        self.searchable = searchable
+
+    def search(self, query, limit=5):
+        return [{"source": self.name, "title": "x", "url": f"http://{self.name}/1"}]
 
 
-def test_twitter_adapter_normalizes_rows(monkeypatch):
-    sample = [
-        {"id": "123", "author": "@alice", "text": "tokio is great for async rust",
-            "likes": 9, "rts": 1, "time": "Jun 09 16:25"},
-    ]
-
-    monkeypatch.setattr(A, "Config", lambda: _NoXquikConfig())
-
-    def fake_run(cmd, **kw):
-        return SimpleNamespace(returncode=0, stdout=json.dumps(sample), stderr="")
-
-    monkeypatch.setattr(A.subprocess, "run", fake_run)
-    rows = A.search_twitter("rust async", 5)
-    assert len(rows) == 1
-    r = rows[0]
-    assert r["source"] == "twitter"
-    assert "tokio" in r["snippet"]
-    assert r["url"] == "https://x.com/alice/status/123"
-    assert r["title"]  # non-empty (author or text-derived)
-    for key in ("source", "title", "url", "snippet", "date"):
-        assert key in r
+def _patch(monkeypatch, channels, statuses):
+    monkeypatch.setattr("autoresearch.channels.get_all_channels", lambda: channels)
+    monkeypatch.setattr(
+        "autoresearch.doctor.check_all",
+        lambda config, offline=False: {name: {"status": st} for name, st in statuses.items()},
+    )
 
 
-def test_twitter_in_registry():
-    assert "twitter" in A.SEARCH_ADAPTERS
+def test_resolve_builds_adapters_from_searchable_active_channels(monkeypatch):
+    channels = [_FakeChannel("github", True), _FakeChannel("reddit", False),
+                _FakeChannel("exa_search", True)]
+    _patch(monkeypatch, channels, {"github": "ok", "exa_search": "off", "reddit": "ok"})
+
+    adapters, skipped, unknown = A.resolve_research()  # default = active searchable
+
+    assert set(adapters) == {"github"}          # exa_search is searchable but inactive
+    assert skipped == ["exa_search"]
+    assert unknown == []
+    # The adapter is the channel's own bound search method.
+    assert adapters["github"]("q", 1)[0]["source"] == "github"
 
 
-def test_github_adapter_neutralizes_flag_smuggling(monkeypatch):
-    """A query starting with '-' must not be parsed as a gh flag."""
+def test_resolve_explicit_channels_run_even_if_inactive(monkeypatch):
+    channels = [_FakeChannel("github", True), _FakeChannel("exa_search", True)]
+    _patch(monkeypatch, channels, {"github": "ok", "exa_search": "off"})
+
+    adapters, skipped, unknown = A.resolve_research(["exa_search"])
+
+    assert set(adapters) == {"exa_search"}
+    assert unknown == []
+
+
+def test_resolve_flags_unknown_and_nonsearchable(monkeypatch):
+    channels = [_FakeChannel("github", True), _FakeChannel("reddit", False)]
+    _patch(monkeypatch, channels, {"github": "ok", "reddit": "ok"})
+
+    adapters, skipped, unknown = A.resolve_research(["github", "reddit", "bogus"])
+
+    assert set(adapters) == {"github"}
+    assert unknown == ["bogus", "reddit"]       # reddit known-but-not-searchable
+
+
+def test_resolve_uses_offline_doctor_to_skip_network_probes(monkeypatch):
+    """`research` resolution must call doctor with offline=True.
+
+    Network liveness probes cost 20s+ per call and are not needed to pick
+    channels.
+    """
     captured = {}
+    monkeypatch.setattr(
+        "autoresearch.channels.get_all_channels",
+        lambda: [_FakeChannel("github", True)],
+    )
 
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+    def fake_check_all(config, offline=False):
+        captured["offline"] = offline
+        return {"github": {"status": "ok"}}
 
-    monkeypatch.setattr(A.subprocess, "run", fake_run)
-    A.search_github("--version", 5)
-    cmd = captured["cmd"]
-    # The untrusted query must come after a `--` end-of-options separator.
-    assert "--" in cmd
-    assert cmd.index("--") < cmd.index("--version")
+    monkeypatch.setattr("autoresearch.doctor.check_all", fake_check_all)
 
-
-def test_twitter_adapter_neutralizes_flag_smuggling(monkeypatch):
-    captured = {}
-    monkeypatch.setattr(A, "Config", lambda: _NoXquikConfig())
-
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
-
-    monkeypatch.setattr(A.subprocess, "run", fake_run)
-    A.search_twitter("-n 9999", 5)
-    cmd = captured["cmd"]
-    assert "--" in cmd
-    assert cmd.index("--") < cmd.index("-n 9999")
+    A.resolve_research()
+    assert captured["offline"] is True
 
 
-def test_exa_adapter_escapes_quotes(monkeypatch):
-    """A query containing a double quote must not break out of the DSL string."""
-    captured = {}
+def test_resolve_accepts_exa_input_alias(monkeypatch):
+    """`--channels exa` still resolves to the exa_search channel."""
+    channels = [_FakeChannel("exa_search", True)]
+    _patch(monkeypatch, channels, {"exa_search": "ok"})
 
-    def fake_run(cmd, **kw):
-        captured["cmd"] = cmd
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    adapters, _, unknown = A.resolve_research(["exa"])
 
-    monkeypatch.setattr(A.subprocess, "run", fake_run)
-    A.search_exa('foo") + evil("', 5)
-    call_arg = captured["cmd"][2]
-    # Raw unescaped quote sequence must not appear; it should be backslash-escaped.
-    assert '") + evil("' not in call_arg
-    assert '\\"' in call_arg
-
-
-def test_github_adapter_raises_on_nonzero_exit(monkeypatch):
-    """A failed gh call (e.g. not authenticated) must raise, not return []."""
-    def fake_run(cmd, **kw):
-        return SimpleNamespace(returncode=1, stdout="", stderr="gh: not logged in")
-    monkeypatch.setattr(A.subprocess, "run", fake_run)
-    import pytest
-    with pytest.raises(Exception) as ei:
-        A.search_github("anything", 5)
-    assert "not logged in" in str(ei.value)
-
-
-def test_twitter_adapter_raises_on_nonzero_exit(monkeypatch):
-    monkeypatch.setattr(A, "Config", lambda: _NoXquikConfig())
-
-    def fake_run(cmd, **kw):
-        return SimpleNamespace(returncode=2, stdout="", stderr="auth failed")
-    monkeypatch.setattr(A.subprocess, "run", fake_run)
-    import pytest
-    with pytest.raises(Exception):
-        A.search_twitter("anything", 5)
-
-
-def test_twitter_adapter_uses_xquik_when_configured(monkeypatch):
-    captured = {}
-
-    class _XquikConfig:
-        def get(self, key, default=None):
-            values = {
-                "xquik_api_key": "test-key",
-                "xquik_base_url": "https://xquik.test",
-            }
-            return values.get(key, default)
-
-    def fake_get(url, **kwargs):
-        captured["url"] = url
-        captured["kwargs"] = kwargs
-
-        class _Response:
-            status_code = 200
-
-            def json(self):
-                return {
-                    "tweets": [
-                        {
-                            "id": "42",
-                            "text": "xquik search works",
-                            "created": "2026-06-21T00:00:00Z",
-                            "author": {"username": "alice"},
-                        }
-                    ]
-                }
-
-        return _Response()
-
-    monkeypatch.setattr(A, "Config", lambda: _XquikConfig())
-    monkeypatch.setattr(A.requests, "get", fake_get)
-    rows = A.search_twitter("agent tools", 500)
-
-    assert captured["url"] == "https://xquik.test/api/v1/x/tweets/search"
-    assert captured["kwargs"]["headers"] == {"x-api-key": "test-key"}
-    assert captured["kwargs"]["params"] == {
-        "q": "agent tools",
-        "queryType": "Latest",
-        "limit": "200",
-    }
-    assert rows == [
-        {
-            "source": "twitter",
-            "title": "@alice: xquik search works",
-            "url": "https://x.com/alice/status/42",
-            "snippet": "xquik search works",
-            "date": "2026-06-21T00:00:00Z",
-        }
-    ]
+    assert set(adapters) == {"exa_search"}
+    assert unknown == []

@@ -161,7 +161,9 @@ class XueqiuChannel(Channel):
     # Health check
     # ------------------------------------------------------------------ #
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
+        if offline:
+            return "ok", "Xueqiu (--offline: API not probed)"
         try:
             data = _get_json(
                 "https://stock.xueqiu.com/v5/stock/batch/quote.json?symbol=SH000001"

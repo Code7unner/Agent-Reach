@@ -126,7 +126,7 @@ class XiaoHongShuChannel(Channel):
         d = urlparse(url).netloc.lower()
         return "xiaohongshu.com" in d or "xhslink.com" in d
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
         xhs = shutil.which("xhs")
         if not xhs:
             return "off", (
@@ -136,6 +136,9 @@ class XiaoHongShuChannel(Channel):
                 "  uv tool install xiaohongshu-cli\n"
                 "After installing, run `xhs login` to log in"
             )
+
+        if offline:
+            return "ok", "xhs-cli installed (--offline: session not probed)"
 
         try:
             r = subprocess.run(

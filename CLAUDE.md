@@ -3,7 +3,7 @@
 ## Project
 autoresearch — Python CLI + library that gives AI agents read/search access to 17 internet platforms.
 Positioning: installer + doctor + config tool. NOT a wrapper — after install, agents call upstream tools directly.
-Repo: github.com/Code7unner/autoresearch | License: MIT | Version: 1.0.1
+Repo: github.com/Code7unner/autoresearch | License: MIT | Version: 1.0.2
 
 ## Commands
 - `pip install -e .` — Dev install

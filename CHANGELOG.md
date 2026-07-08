@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### ✨ Features
+
+- **New channel: TikTok (read-only).** Reads TikTok video metadata + subtitles and a
+  user's video list via yt-dlp (`channels/tiktok.py`), bringing the registered total to
+  23. It is intentionally not `searchable` — yt-dlp has no working TikTok keyword search
+  (`tiktok:tag` is broken upstream) — so it does not join the `research` fan-out; agents
+  read a shared URL directly. Documented in SKILL.md.
+
+### 🐛 Bug Fixes — Reddit channel
+
+- **Fixed an unsatisfiable install hint.** The Reddit channel told users to
+  `pip install 'rdt-cli>=0.4.2'`, but PyPI's latest is `0.4.1`, so the command failed
+  outright. The hint now recommends `pip install rdt-cli` (0.4.1 works for search/status)
+  and points at the source repo for newer builds; a guard test prevents the pin returning.
+- **More debuggable status-check failures.** When `rdt status --json` can't be parsed the
+  channel now reports the failure kind and suggests retrying (transient post-install
+  hiccups previously surfaced as an opaque "status check failed").
+
+### 🐛 Bug Fixes — `research` fan-out reliability
+
+- **`research` no longer runs a slow network doctor on every call.** Resolution now
+  skips the doctor probe entirely for explicit `--channels` requests (the active set is
+  unused there) and uses the offline doctor for default runs. An explicit-channel
+  `research` call dropped from ~19.5s to ~4.5s.
+- **Zero-result channels are reported, not silently dropped.** `_meta` now carries
+  `result_counts` (per-channel row counts, including zeros) and `channels_empty`, so a
+  keyword channel that legitimately returns nothing for a long natural-language query is
+  distinguishable from one that errored or was dropped.
+- **Flaky `twitter` searches now retry.** `twitter.search` routes through a new
+  `utils.proc.run_with_retry` (retries on nonzero exit / timeout / OS error with linear
+  backoff), turning transient twitter-cli failures into results instead of empty slots.
+- **Fan-out deadline no longer cuts valid slow channels.** The outer `run_research`
+  timeout defaulted to 20s while per-channel search subprocesses run up to ~45s, so a
+  valid-but-slow channel got killed and mislabeled `TimeoutError`. The default outer
+  deadline is now 45s (>= the slowest per-channel budget).
+- **`offline=True` now actually skips network probes in the public-API channels.**
+  HackerNews, arXiv, Stack Overflow, Wikipedia, PubMed, Semantic Scholar, V2EX, GitHub,
+  and Bilibili previously accepted the `offline` flag but still hit the network in
+  `check()`. They now report install/config status only when offline. `doctor --offline`
+  and default `research` resolution drop from ~16s to ~0.5s.
+
+---
+
 ## [1.3.1] - 2026-03-27
 
 ### 🐛 Bug Fixes

@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 """YouTube — check if yt-dlp is available with JS runtime."""
 
+import json
 import shutil
+import subprocess
+from datetime import datetime, timezone
 
 from autoresearch.utils.paths import get_ytdlp_config_path, render_ytdlp_fix_command
+from autoresearch.utils.proc import raise_on_error
 from autoresearch.utils.text import read_utf8_text
 
 from .base import Channel
@@ -14,13 +18,43 @@ class YouTubeChannel(Channel):
     description = "YouTube videos and subtitles"
     backends = ["yt-dlp"]
     tier = 0
+    searchable = True
 
     def can_handle(self, url: str) -> bool:
         from urllib.parse import urlparse
         d = urlparse(url).netloc.lower()
         return "youtube.com" in d or "youtu.be" in d
 
-    def check(self, config=None):
+    def search(self, query: str, limit: int = 5) -> list:
+        """research rows from a yt-dlp `ytsearchN:` query (flat playlist, fast)."""
+        target = f"ytsearch{int(limit)}:{query}"
+        # `--` ends option parsing; the target itself starts with `ytsearch` so it
+        # can't be read as a flag, but keep the separator for defense in depth.
+        out = subprocess.run(
+            ["yt-dlp", "--flat-playlist", "-J", "--", target],
+            capture_output=True, encoding="utf-8", errors="replace", timeout=45,
+        )
+        raise_on_error(out, "yt-dlp")
+        data = json.loads(out.stdout or "{}")
+        rows = []
+        for e in (data.get("entries") or [])[:limit]:
+            vid = e.get("id")
+            url = e.get("url") or (f"https://www.youtube.com/watch?v={vid}" if vid else "")
+            desc = (e.get("description") or "").strip()
+            snippet = desc[:280] if desc else (e.get("uploader") or e.get("channel") or "")
+            ts = e.get("timestamp")
+            date = (datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d")
+                    if ts else "")
+            rows.append({
+                "source": "youtube",
+                "title": e.get("title") or "",
+                "url": url,
+                "snippet": snippet,
+                "date": date,
+            })
+        return rows
+
+    def check(self, config=None, offline: bool = False):
         if not shutil.which("yt-dlp"):
             return "off", "yt-dlp not installed. Install: pip install yt-dlp"
         # Check JS runtime

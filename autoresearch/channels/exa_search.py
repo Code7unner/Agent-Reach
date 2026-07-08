@@ -3,6 +3,9 @@
 
 import shutil
 import subprocess
+
+from autoresearch.utils.proc import raise_on_error
+
 from .base import Channel
 
 
@@ -11,11 +14,37 @@ class ExaSearchChannel(Channel):
     description = "Web-wide semantic search"
     backends = ["Exa via mcporter"]
     tier = 0
+    searchable = True
 
     def can_handle(self, url: str) -> bool:
         return False  # Search-only channel
 
-    def check(self, config=None):
+    def search(self, query: str, limit: int = 5) -> list:
+        """research rows from Exa web search via mcporter (parses text output)."""
+        # Escape backslash + double-quote so the query can't break out of the DSL string.
+        safe_q = query.replace("\\", "\\\\").replace('"', '\\"')
+        out = subprocess.run(
+            ["mcporter", "call",
+             f'exa.web_search_exa(query: "{safe_q}", numResults: {int(limit)})'],
+            capture_output=True, encoding="utf-8", errors="replace", timeout=40,
+        )
+        raise_on_error(out, "mcporter")
+        rows, cur = [], {}
+        for line in (out.stdout or "").splitlines():
+            if line.startswith("Title:"):
+                if cur.get("url"):
+                    rows.append(cur)
+                cur = {"source": "exa_search", "title": line[6:].strip(),
+                       "url": "", "snippet": "", "date": ""}
+            elif line.startswith("URL:"):
+                cur["url"] = line[4:].strip()
+            elif line.startswith("Published:"):
+                cur["date"] = line[10:].strip()
+        if cur.get("url"):
+            rows.append(cur)
+        return rows[:limit]
+
+    def check(self, config=None, offline: bool = False):
         mcporter = shutil.which("mcporter")
         if not mcporter:
             return "off", (

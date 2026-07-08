@@ -93,11 +93,14 @@ def test_check_bird_fallback_auth_missing():
 # --- neither installed ---
 
 def test_check_nothing_installed():
-    """Neither twitter-cli nor bird → warn with install hint."""
+    """Neither twitter-cli nor bird → off (tool absent), with install hint.
+
+    'Not installed' is `off`, not `warn`; `warn` is reserved for an installed-but-
+    dead session so doctor can surface re-auth distinctly (session-health #4)."""
     channel = TwitterChannel()
     with patch("shutil.which", return_value=None):
         status, message = channel.check()
-    assert status == "warn"
+    assert status == "off"
     assert "twitter-cli" in message
 
 

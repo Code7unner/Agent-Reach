@@ -1,6 +1,6 @@
 [project]
 name = "autoresearch"
-version = "1.0.1"
+version = "1.0.2"
 description = "Give your AI Agent eyes to see the entire internet. Search + Read 17 platforms."
 readme = "README.md"
 license = {text = "MIT"}

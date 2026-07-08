@@ -35,7 +35,7 @@ class WeChatChannel(Channel):
         d = urlparse(url).netloc.lower()
         return "mp.weixin.qq.com" in d or "weixin.qq.com" in d
 
-    def check(self, config=None):
+    def check(self, config=None, offline: bool = False):
         has_exa = _exa_available()
         has_camoufox = False
         try:
